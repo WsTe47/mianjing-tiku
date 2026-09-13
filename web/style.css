@@ -302,3 +302,9 @@ td.mx-tot,th.mx-tot{color:var(--dim);background:var(--card2);font-weight:600}
 .sec-n{color:var(--acc);font-weight:600}
 .sec-arrow{margin-left:auto;color:var(--dim);font-size:11.5px}
 @media print{.sec-toggle{display:none}.ans-clamp{-webkit-line-clamp:unset;overflow:visible}}
+
+/* 「依据 N 篇」按钮：默认把出处藏起来，先说有哪些说法，再让读者按需看依据 */
+.vsrc-toggle{margin-left:auto;background:none;border:0;color:var(--acc);font-family:inherit;
+ font-size:11.5px;cursor:pointer;padding:0 2px;white-space:nowrap}
+.vsrc-toggle:hover{text-decoration:underline}
+.var-item .var{display:flex;align-items:baseline;gap:6px}

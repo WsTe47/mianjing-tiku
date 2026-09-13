@@ -167,14 +167,6 @@ function bindExpand(container) {
       refreshVariants(vLess.closest('.q'));
       return;
     }
-    const vSec = e.target.closest('[data-varsec]');
-    if (vSec) {
-      e.stopPropagation();
-      const qid = vSec.dataset.varsec;
-      if (varSecOpen.has(qid)) varSecOpen.delete(qid); else varSecOpen.add(qid);
-      refreshVariants(vSec.closest('.q'));
-      return;
-    }
     const aLess = e.target.closest('[data-ans-less]');
     if (aLess) {
       e.stopPropagation();
@@ -212,8 +204,16 @@ function bindExpand(container) {
     const vSrc = e.target.closest('[data-vsrc]');
     if (vSrc) {
       e.stopPropagation();
-      vsrcOpen.add(vSrc.dataset.vsrc);
+      const k = vSrc.dataset.vsrc;
+      if (vsrcOpen.has(k)) vsrcOpen.delete(k); else vsrcOpen.add(k);
       refreshVariants(vSrc.closest('.q'));
+      return;
+    }
+    const vSrcAll = e.target.closest('[data-vsrcall]');
+    if (vSrcAll) {
+      e.stopPropagation();
+      vsrcAll.add(vSrcAll.dataset.vsrcall);
+      refreshVariants(vSrcAll.closest('.q'));
       return;
     }
     const h = e.target.closest('.qh');
@@ -286,7 +286,8 @@ function answerBlock(q) {
 // 列表接口只带回前几条（它占整页响应体积近九成），完整列表在展开时按 id 取回，
 // 所以这里由调用方传入 (列表, 总数) 两个值。
 function renderOcc(list, total, qid) {
-  const all = qid && occOpen.has(qid);
+  const key = qid == null ? '' : String(qid);
+  const all = key && occOpen.has(key);
   const shown = all ? list : list.slice(0, OCC_SHOW);
   const occ = shown.map((o) => `<div class="oc">
       <span class="co">${esc(o.company)}</span>
@@ -297,12 +298,12 @@ function renderOcc(list, total, qid) {
   const hidden = list.length - shown.length;
   let foot = '';
   if (hidden > 0) {
-    foot = `<button class="var-more" data-occ-all="${qid}">展开全部 ${list.length} 条出现记录 ▾</button>`;
+    foot = `<button class="var-more" data-occ-all="${key}">展开全部 ${list.length} 条出现记录 ▾</button>`;
   } else if (all && list.length > OCC_SHOW) {
-    foot = `<button class="var-more" data-occ-less="${qid}">收起 ▴</button>`;
+    foot = `<button class="var-more" data-occ-less="${key}">收起 ▴</button>`;
   }
   // 列表接口本来就只带前几条，此时 hidden<=0，不显示按钮
-  const note = (!qid && total > list.length)
+  const note = (!key && total > list.length)
     ? `<div class="oc-more">另有 ${total - list.length} 条出现记录，展开后加载…</div>` : '';
   return occ + foot + note;
 }
@@ -333,55 +334,55 @@ const VSRC_SHOW = 3;
 const occOpen = new Set();
 const ansOpen = new Set();     // 已展开完整答案的题目 id
 const varOpen = new Set();     // 已展开「全部 N 种」的题目 id
-const varSecOpen = new Set();  // 已展开「其他措辞」整个模块的题目 id
-const vsrcOpen = new Set();    // 已展开全部出处的 "题目id:第几种"
+const vsrcOpen = new Set();    // 已展开「依据」的 "题目id:第几种"
+const vsrcAll = new Set();     // 依据里已展开「全部 N 篇」的
+// ⚠️ 这几个 Set 的键**一律用字符串**。dataset 取出来是字符串（"1"），
+// 而 q.id 是数字（1），Set.has 不做类型转换——混用会导致「点了没反应」，
+// 而且不报错。下面每个渲染函数进来先统一 String() 一次。
 
 function renderVariantSources(sources, occs, qid) {
   if (!sources || !sources.length) return '';
+  const key = qid == null ? '' : String(qid);
   const n = sources.length;
-  // 模块整体默认收起：这是展开卡片里最长的一块，先只给一行标题，想看再点开。
-  // 点开之后仍只列前 VAR_SHOW 种（每种再只列前 VSRC_SHOW 篇）。
-  const secOpen = varSecOpen.has(qid);
-  const head = `<button class="sec-toggle" data-varsec="${qid}">`
-    + `<span>其他措辞 · 各自出自哪篇面经</span>`
-    + `<span class="sec-n">${n} 种</span>`
-    + `<span class="sec-arrow">${secOpen ? '▴ 收起' : '▾ 展开'}</span></button>`;
-  if (!secOpen) return head;
-
   const byPost = {};
   (occs || []).forEach((o) => { byPost[o.postId] = o; });
 
-  const allVar = varOpen.has(qid);
+  const allVar = varOpen.has(key);
   const shown = allVar ? sources : sources.slice(0, VAR_SHOW);
 
+  // 层次：**先说「有哪些说法」，再按需展开「依据」**。
+  // 所以默认只列措辞本身 + 次数，每条的出处藏在「依据 N 篇」后面。
   const items = shown.map((v, i) => {
+    const k = key + ':' + i;
+    const cnt = (v.postIds || []).length;
+    const open = vsrcOpen.has(k);
+    const head = `<div class="var">${esc(v.text)}`
+      + (cnt > 1 ? `<span class="var-n">×${cnt}</span>` : '')
+      + `<button class="vsrc-toggle" data-vsrc="${k}">依据 ${cnt} 篇 ${open ? '▴' : '▾'}</button>`
+      + `</div>`;
+    if (!open) return `<div class="var-item">${head}</div>`;
+
     const refsAll = (v.postIds || []).filter((p) => byPost[p]);
-    const key = qid + ':' + i;
-    const refs = vsrcOpen.has(key) ? refsAll : refsAll.slice(0, VSRC_SHOW);
+    const refs = vsrcAll.has(k) ? refsAll : refsAll.slice(0, VSRC_SHOW);
     const chips = refs.map((pid) => {
       const o = byPost[pid];
       const bits = [o.company, o.roundGroup || o.round, o.date].filter(Boolean).map(esc).join(' · ');
       return `<a class="vsrc" href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">${bits} ↗</a>`;
     }).join('');
     const rest = refsAll.length - refs.length;
-    const restBtn = rest > 0
-      ? `<button class="vsrc-more" data-vsrc="${key}">还有 ${rest} 篇 ▾</button>` : '';
-    const cnt = (v.postIds || []).length;
-    // 出现次数是判断「这条措辞可不可信」的主要线索，所以单独做成醒目的角标
-    return `<div class="var-item">
-      <div class="var">${esc(v.text)}${cnt > 1 ? `<span class="var-n">×${cnt}</span>` : ''}</div>
-      <div class="vsrc-list">${chips}${restBtn}</div>
-    </div>`;
+    const more = rest > 0
+      ? `<button class="vsrc-more" data-vsrcall="${k}">还有 ${rest} 篇 ▾</button>` : '';
+    return `<div class="var-item">${head}<div class="vsrc-list">${chips}${more}</div></div>`;
   }).join('');
 
   const hidden = n - shown.length;
   let foot = '';
   if (hidden > 0) {
-    foot = `<button class="var-more" data-var="${qid}">展开全部 ${n} 种措辞 ▾</button>`;
+    foot = `<button class="var-more" data-var="${key}">展开全部 ${n} 种措辞 ▾</button>`;
   } else if (allVar && n > VAR_SHOW) {
-    foot = `<button class="var-more" data-varless="${qid}">收起 ▴</button>`;
+    foot = `<button class="var-more" data-varless="${key}">收起 ▴</button>`;
   }
-  return head + items + foot;
+  return `<div class="lb">其他措辞 · 点右侧「依据」看它出自哪篇面经</div>${items}${foot}`;
 }
 
 function answerBlockFull(q, id) {
@@ -404,7 +405,7 @@ function refreshOcc(card) {
   const q = card && card._q;
   if (!q) return;
   const box = card.querySelector('[data-occ-box]');
-  if (box) box.innerHTML = renderOcc(q.occurrences || [], q.n, q.id);
+  if (box) box.innerHTML = renderOcc(q.occurrences || [], q.n, String(q.id));
 }
 
 // refreshVariants 只重画措辞块（折叠/展开时用），不动卡片其余部分。
@@ -412,7 +413,7 @@ function refreshVariants(card) {
   const q = card && card._q;
   if (!q) return;
   const vb = card.querySelector('[data-var-box]');
-  if (vb) vb.innerHTML = renderVariantSources(q.variantSources, q.occurrences, q.id);
+  if (vb) vb.innerHTML = renderVariantSources(q.variantSources, q.occurrences, String(q.id));
 }
 
 // loadDetail 展开卡片时把完整内容取回来。
