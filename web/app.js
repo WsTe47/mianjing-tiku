@@ -152,6 +152,52 @@ function bindExpand(container) {
       loadDetail(more.dataset.ansFull, more.closest('.q'));
       return;
     }
+    // 措辞折叠：展开全部 / 收起 / 还有 N 篇——都只重画措辞块，不切换卡片开合
+    const vAll = e.target.closest('[data-var]');
+    if (vAll) {
+      e.stopPropagation();
+      varOpen.add(vAll.dataset.var);
+      refreshVariants(vAll.closest('.q'));
+      return;
+    }
+    const vLess = e.target.closest('[data-varless]');
+    if (vLess) {
+      e.stopPropagation();
+      varOpen.delete(vLess.dataset.varless);
+      refreshVariants(vLess.closest('.q'));
+      return;
+    }
+    const oAll = e.target.closest('[data-occ-all]');
+    if (oAll) {
+      e.stopPropagation();
+      occOpen.add(oAll.dataset.occAll);
+      refreshOcc(oAll.closest('.q'));
+      return;
+    }
+    const oLess = e.target.closest('[data-occ-less]');
+    if (oLess) {
+      e.stopPropagation();
+      occOpen.delete(oLess.dataset.occLess);
+      refreshOcc(oLess.closest('.q'));
+      return;
+    }
+    const aEx = e.target.closest('[data-ans-expand]');
+    if (aEx) {
+      e.stopPropagation();
+      const qid = aEx.dataset.ansExpand;
+      ansOpen.add(qid);
+      const card = aEx.closest('.q');
+      const ab = card.querySelector(`[data-ans-box="${qid}"]`);
+      if (ab && card._q) ab.innerHTML = answerBlockFull(card._q, qid);
+      return;
+    }
+    const vSrc = e.target.closest('[data-vsrc]');
+    if (vSrc) {
+      e.stopPropagation();
+      vsrcOpen.add(vSrc.dataset.vsrc);
+      refreshVariants(vSrc.closest('.q'));
+      return;
+    }
     const h = e.target.closest('.qh');
     if (!h || !container.contains(h)) return;
     const card = h.parentElement;
@@ -221,16 +267,26 @@ function answerBlock(q) {
 //
 // 列表接口只带回前几条（它占整页响应体积近九成），完整列表在展开时按 id 取回，
 // 所以这里由调用方传入 (列表, 总数) 两个值。
-function renderOcc(list, total) {
-  const occ = list.map((o) => `<div class="oc">
+function renderOcc(list, total, qid) {
+  const all = qid && occOpen.has(qid);
+  const shown = all ? list : list.slice(0, OCC_SHOW);
+  const occ = shown.map((o) => `<div class="oc">
       <span class="co">${esc(o.company)}</span>
       <span class="meta">${esc(o.roundGroup || o.round)} · ${esc(o.jobGroup || o.job)} · ${esc(o.date)}</span>
       ${o.official ? '<span class="oc-off">真题</span>' : ''}
       <a href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">原文 ↗</a>
     </div>`).join('');
-  const more = total > list.length
+  const hidden = list.length - shown.length;
+  let foot = '';
+  if (hidden > 0) {
+    foot = `<button class="var-more" data-occ-all="${qid}">展开全部 ${list.length} 条出现记录 ▾</button>`;
+  } else if (all && list.length > OCC_SHOW) {
+    foot = `<button class="var-more" data-occ-less="${qid}">收起 ▴</button>`;
+  }
+  // 列表接口本来就只带前几条，此时 hidden<=0，不显示按钮
+  const note = (!qid && total > list.length)
     ? `<div class="oc-more">另有 ${total - list.length} 条出现记录，展开后加载…</div>` : '';
-  return occ + more;
+  return occ + foot + note;
 }
 
 // 其他措辞（预览态）。列表接口只给一个扁平列表。
@@ -245,31 +301,87 @@ function renderVariantPreview(q) {
 
 // 其他措辞（完整态）：每种说法后面列出**它出自哪几篇面经**，可直接点开原文。
 //
-// 为什么必须做这个对应：原来是一个扁平列表，和下面的「被问到的场合」互不相干，
-// 用户看不出「Prompt Cache」「prompt = f"""」这些到底是哪篇面经里的，
-// 也就没法判断哪条措辞可信。数据本来就够——occurrences 每条都带 raw_text 与 post_id。
-// 按出现次数降序（后端已排），多次出现的说法排前面——它们更可能是真问题。
-function renderVariantSources(sources, occs) {
+// 数量分布极其偏斜：99.6% 的题不到 8 种措辞，但极少数题是病态的——
+// 「自我介绍一下。」有 322 种措辞、出处加起来上千条，全铺开就是几百行。
+// 所以默认只列前 VAR_SHOW 种、每种只列前 VSRC_SHOW 篇，其余按需展开。
+const VAR_SHOW = 8;
+// 参考答案折叠阈值。答案长度分布很集中：94% 的题在 1,500~3,000 字（平均 1,935），
+// 全铺开会把卡片撑成「一屏答案 + 一点点别的」。默认只给前 ANSWER_FOLD 字。
+const ANSWER_FOLD = 600;
+// 出现记录同样要折叠：高频题动辄几百条（「自我介绍一下。」有 584 条），
+// 全铺开是 160KB / 2900 行——比措辞还夸张。
+const OCC_SHOW = 12;
+const occOpen = new Set();
+const ansOpen = new Set();
+const VSRC_SHOW = 3;
+const varOpen = new Set();   // 已展开全部措辞的题目 id
+const vsrcOpen = new Set();  // 已展开全部出处的 "题目id:第几种"
+
+function renderVariantSources(sources, occs, qid) {
   if (!sources || !sources.length) return '';
   const byPost = {};
   (occs || []).forEach((o) => { byPost[o.postId] = o; });
-  const items = sources.map((v) => {
-    const refs = (v.postIds || []).map((pid) => {
+
+  const allVar = varOpen.has(qid);
+  const shown = allVar ? sources : sources.slice(0, VAR_SHOW);
+
+  const items = shown.map((v, i) => {
+    const refsAll = (v.postIds || []).filter((p) => byPost[p]);
+    const key = qid + ':' + i;
+    const refs = vsrcOpen.has(key) ? refsAll : refsAll.slice(0, VSRC_SHOW);
+    const chips = refs.map((pid) => {
       const o = byPost[pid];
-      if (!o) return '';
       const bits = [o.company, o.roundGroup || o.round, o.date].filter(Boolean).map(esc).join(' · ');
       return `<a class="vsrc" href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">${bits} ↗</a>`;
-    }).filter(Boolean);
-    if (!refs.length) return '';
+    }).join('');
+    const rest = refsAll.length - refs.length;
+    const restBtn = rest > 0
+      ? `<button class="vsrc-more" data-vsrc="${key}">还有 ${rest} 篇 ▾</button>` : '';
     const n = (v.postIds || []).length;
-    return `<div class="var-item"><div class="var">${esc(v.text)}`
-      + (n > 1 ? `<span class="var-n">×${n}</span>` : '')
-      + `</div><div class="vsrc-list">${refs.join('')}</div></div>`;
-  }).filter(Boolean).join('');
-  return items ? `<div class="lb">其他措辞 · 各自出自哪篇面经</div>${items}` : '';
+    // 出现次数是判断「这条措辞可不可信」的主要线索，所以单独做成醒目的角标
+    return `<div class="var-item">
+      <div class="var">${esc(v.text)}${n > 1 ? `<span class="var-n">×${n}</span>` : ''}</div>
+      <div class="vsrc-list">${chips}${restBtn}</div>
+    </div>`;
+  }).join('');
+
+  const hidden = sources.length - shown.length;
+  let foot = '';
+  if (hidden > 0) {
+    foot = `<button class="var-more" data-var="${qid}">展开全部 ${sources.length} 种措辞 ▾</button>`;
+  } else if (allVar && sources.length > VAR_SHOW) {
+    foot = `<button class="var-more" data-varless="${qid}">收起 ▴</button>`;
+  }
+  return `<div class="lb">其他措辞 · 各自出自哪篇面经</div>${items}${foot}`;
 }
 
-// loadMoreOcc 展开时把完整出现记录取回来，替换掉预览。
+// answerBlockFull 渲染参考答案：过长时先给前 ANSWER_FOLD 字，其余按需展开。
+function answerBlockFull(q, id) {
+  const txt = q.answer || '';
+  if (!txt) return '';
+  const head = `<div class="lb ans-lb">参考答案 <span class="ans-src">牛客结构化真题</span></div>`;
+  const runes = Array.from(txt);
+  if (ansOpen.has(id) || runes.length <= ANSWER_FOLD) return head + answerParas(txt);
+  return head + answerParas(runes.slice(0, ANSWER_FOLD).join(''))
+    + `<button class="var-more" data-ans-expand="${id}">展开全文（共 ${runes.length} 字）▾</button>`;
+}
+
+// refreshOcc 只重画出现记录块。
+function refreshOcc(card) {
+  const q = card && card._q;
+  if (!q) return;
+  const box = card.querySelector('[data-occ-box]');
+  if (box) box.innerHTML = renderOcc(q.occurrences || [], q.n, q.id);
+}
+
+// refreshVariants 只重画措辞块（折叠/展开时用），不动卡片其余部分。
+function refreshVariants(card) {
+  const q = card && card._q;
+  if (!q) return;
+  const vb = card.querySelector('[data-var-box]');
+  if (vb) vb.innerHTML = renderVariantSources(q.variantSources, q.occurrences, q.id);
+}
+
 // loadDetail 展开卡片时把完整内容取回来。
 //
 // 列表接口为了体积只给预览（出现记录 6 条、措辞 12 条、答案 400 字），
@@ -279,14 +391,14 @@ async function loadDetail(id, card) {
   card.dataset.detailLoaded = '1';
   try {
     const q = await api('/api/questions/' + id);
+    card._q = q;   // 缓存下来，折叠/展开措辞时不必重新请求
     const occ = card.querySelector('[data-occ-box]');
-    if (occ) occ.innerHTML = renderOcc(q.occurrences || [], q.n);
+    if (occ) occ.innerHTML = renderOcc(q.occurrences || [], q.n, id);
     const vb = card.querySelector('[data-var-box]');
-    if (vb && q.variantSources) vb.innerHTML = renderVariantSources(q.variantSources, q.occurrences);
+    if (vb && q.variantSources) vb.innerHTML = renderVariantSources(q.variantSources, q.occurrences, id);
     const ab = card.querySelector(`[data-ans-box="${id}"]`);
     if (ab && q.answer) {
-      ab.innerHTML = `<div class="lb ans-lb">参考答案 <span class="ans-src">牛客结构化真题</span></div>`
-        + answerParas(q.answer);
+      ab.innerHTML = answerBlockFull(q, id);
       const btn = card.querySelector('[data-ans-full]');
       if (btn) btn.remove();
     }

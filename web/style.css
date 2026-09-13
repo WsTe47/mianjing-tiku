@@ -72,7 +72,7 @@ h1 span{background:linear-gradient(90deg,var(--acc),var(--acc2));-webkit-backgro
 .oc a{color:var(--acc);text-decoration:none;border-bottom:1px dashed rgba(76,141,255,.5);
  padding:1px 5px;border-radius:5px;background:rgba(76,141,255,.08)}
 .oc a:hover{background:rgba(76,141,255,.2);border-bottom-style:solid}
-.var{color:var(--dim);padding-left:11px;position:relative;margin:3px 0}
+.var{color:var(--fg);padding-left:11px;position:relative;margin:3px 0}
 .var:before{content:"";position:absolute;left:2px;top:9px;width:4px;height:4px;border-radius:50%;background:var(--line)}
 .empty{text-align:center;color:var(--dim);padding:40px 0;font-size:13.5px}
 .err{background:rgba(255,107,157,.1);border:1px solid rgba(255,107,157,.35);color:#ff9dc0;
@@ -271,10 +271,20 @@ td.mx-tot,th.mx-tot{color:var(--dim);background:var(--card2);font-weight:600}
 .var-item{padding:7px 0;border-top:1px solid var(--line)}
 .var-item:first-of-type{border-top:0}
 .var-item .var{padding:0}
-.var-n{color:var(--dim);font-size:11px;margin-left:6px}
+/* 出现次数是判断「这条措辞可不可信」的主要线索，用强调色 + 加粗，
+   不再和正文一样是灰的（用户反馈太淡看不清） */
+.var-n{color:var(--acc);font-size:12px;font-weight:600;margin-left:7px;
+ background:rgba(var(--acc-rgb),.14);border-radius:999px;padding:1px 8px}
 .vsrc-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 .vsrc{color:var(--acc);font-size:11.5px;text-decoration:none;
  background:rgba(var(--acc-rgb),.10);border:1px solid var(--line);
  border-radius:999px;padding:2px 9px;white-space:nowrap}
 .vsrc:hover{border-color:var(--acc);background:rgba(var(--acc-rgb),.2)}
 @media print{.vsrc{color:#000;background:none;border-color:#bbb}}
+
+.var-more,.vsrc-more{background:var(--card2);color:var(--acc);border:1px solid var(--line);
+ border-radius:999px;padding:3px 12px;font-size:11.5px;cursor:pointer;font-family:inherit}
+.var-more{display:block;margin:9px 0 0}
+.vsrc-more{padding:2px 9px}
+.var-more:hover,.vsrc-more:hover{border-color:var(--acc);background:rgba(var(--acc-rgb),.16)}
+@media print{.var-more,.vsrc-more{display:none}}
