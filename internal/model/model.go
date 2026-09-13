@@ -71,6 +71,13 @@ type Question struct {
 	LLMDomain string   `json:"llmDomain,omitempty"`
 	LLMCat    string   `json:"llmCat,omitempty"`
 	Variants  []string `json:"variants,omitempty"`
+	// VariantSources 把「每种说法」连到「它出自哪几篇面经」。
+	//
+	// 之前 variants 是一个扁平列表，和 occurrences 那份场合列表互不相干，
+	// 用户看不出「Prompt Cache」这句话到底是哪篇面经里的。
+	// 数据本来就够：occurrences 每条都同时带 raw_text（当篇的写法）与 post_id。
+	// 只在详情接口里给（列表接口的 occurrences 截断到 6 条，拼不出完整对应）。
+	VariantSources []VariantSource `json:"variantSources,omitempty"`
 	// VariantN 是「其他措辞」的总数。列表接口只带前 variantPreviewLimit 条
 	//（同义题合并后一条题可能有几十种写法，全带会把响应撑大），
 	// VariantN 让前端知道还有多少没展示；详情接口返回全部。
@@ -160,6 +167,15 @@ type Meta struct {
 	// 那一段，用户就再也选不回更宽的范围了。
 	GlobalFrom string `json:"globalFrom"`
 	GlobalTo   string `json:"globalTo"`
+}
+
+// VariantSource 是一种措辞，以及它在哪些帖子里出现过。
+//
+// PostIDs 指向同一响应里的 occurrences[].postId，前端据此取公司/日期/原文链接——
+// 不在这里重复带一份，避免同一份数据在两处漂移。
+type VariantSource struct {
+	Text    string  `json:"text"`
+	PostIDs []int64 `json:"postIds"`
 }
 
 // Filter 是问题列表的查询条件。空字符串表示不筛。

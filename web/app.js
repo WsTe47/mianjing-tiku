@@ -149,7 +149,7 @@ function bindExpand(container) {
     const more = e.target.closest('[data-ans-full]');
     if (more) {
       e.stopPropagation();
-      loadFullAnswer(more.dataset.ansFull, more);
+      loadDetail(more.dataset.ansFull, more.closest('.q'));
       return;
     }
     const h = e.target.closest('.qh');
@@ -160,7 +160,7 @@ function bindExpand(container) {
     // 展开时才补拉完整出现记录（列表接口只带前几条，省掉近九成体积）
     if (b && b.classList.contains('on')) {
       const box = card.querySelector('[data-occ-box]');
-      if (box && box.dataset.occMore === '1') loadMoreOcc(box.dataset.occBox, box);
+      loadDetail(box ? box.dataset.occBox : null, card);
     }
   };
 }
@@ -216,19 +216,6 @@ function answerBlock(q) {
 }
 
 // 展开时按需取完整答案，拿到后原地替换，不重绘整个列表。
-async function loadFullAnswer(id, el) {
-  el.textContent = '加载中…';
-  try {
-    const q = await api('/api/questions/' + id);
-    const box = document.querySelector(`[data-ans-box="${id}"]`);
-    if (box && q.answer) {
-      box.innerHTML = `<div class="lb ans-lb">参考答案 <span class="ans-src">牛客结构化真题</span></div>` +
-        answerParas(q.answer);
-    }
-  } catch (e) {
-    el.textContent = '加载失败：' + e.message;
-  }
-}
 
 // 出现记录的渲染。
 //
@@ -246,26 +233,71 @@ function renderOcc(list, total) {
   return occ + more;
 }
 
+// 其他措辞（预览态）。列表接口只给一个扁平列表。
+function renderVariantPreview(q) {
+  const vs = q.variants || [];
+  if (!vs.length) return '';
+  const more = (q.variantN || vs.length) > vs.length
+    ? `<div class="oc-more">另有 ${q.variantN - vs.length} 种措辞，展开后加载</div>` : '';
+  return `<div class="lb">其他措辞</div>`
+    + vs.map((x) => `<div class="var">${esc(x)}</div>`).join('') + more;
+}
+
+// 其他措辞（完整态）：每种说法后面列出**它出自哪几篇面经**，可直接点开原文。
+//
+// 为什么必须做这个对应：原来是一个扁平列表，和下面的「被问到的场合」互不相干，
+// 用户看不出「Prompt Cache」「prompt = f"""」这些到底是哪篇面经里的，
+// 也就没法判断哪条措辞可信。数据本来就够——occurrences 每条都带 raw_text 与 post_id。
+// 按出现次数降序（后端已排），多次出现的说法排前面——它们更可能是真问题。
+function renderVariantSources(sources, occs) {
+  if (!sources || !sources.length) return '';
+  const byPost = {};
+  (occs || []).forEach((o) => { byPost[o.postId] = o; });
+  const items = sources.map((v) => {
+    const refs = (v.postIds || []).map((pid) => {
+      const o = byPost[pid];
+      if (!o) return '';
+      const bits = [o.company, o.roundGroup || o.round, o.date].filter(Boolean).map(esc).join(' · ');
+      return `<a class="vsrc" href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">${bits} ↗</a>`;
+    }).filter(Boolean);
+    if (!refs.length) return '';
+    const n = (v.postIds || []).length;
+    return `<div class="var-item"><div class="var">${esc(v.text)}`
+      + (n > 1 ? `<span class="var-n">×${n}</span>` : '')
+      + `</div><div class="vsrc-list">${refs.join('')}</div></div>`;
+  }).filter(Boolean).join('');
+  return items ? `<div class="lb">其他措辞 · 各自出自哪篇面经</div>${items}` : '';
+}
+
 // loadMoreOcc 展开时把完整出现记录取回来，替换掉预览。
-async function loadMoreOcc(id, box) {
-  if (!box || box.dataset.occLoaded) return;
-  box.dataset.occLoaded = '1';
+// loadDetail 展开卡片时把完整内容取回来。
+//
+// 列表接口为了体积只给预览（出现记录 6 条、措辞 12 条、答案 400 字），
+// 所以这三样都在这里补齐，且只请求一次。
+async function loadDetail(id, card) {
+  if (!card || card.dataset.detailLoaded) return;
+  card.dataset.detailLoaded = '1';
   try {
     const q = await api('/api/questions/' + id);
-    box.innerHTML = renderOcc(q.occurrences || [], q.n);
+    const occ = card.querySelector('[data-occ-box]');
+    if (occ) occ.innerHTML = renderOcc(q.occurrences || [], q.n);
+    const vb = card.querySelector('[data-var-box]');
+    if (vb && q.variantSources) vb.innerHTML = renderVariantSources(q.variantSources, q.occurrences);
+    const ab = card.querySelector(`[data-ans-box="${id}"]`);
+    if (ab && q.answer) {
+      ab.innerHTML = `<div class="lb ans-lb">参考答案 <span class="ans-src">牛客结构化真题</span></div>`
+        + answerParas(q.answer);
+      const btn = card.querySelector('[data-ans-full]');
+      if (btn) btn.remove();
+    }
   } catch (e) {
-    delete box.dataset.occLoaded;   // 失败保留预览，下次展开还能重试
+    delete card.dataset.detailLoaded;   // 失败保留预览，下次展开还能重试
   }
 }
 
 function qCard(q, open = false) {
   const tag = tagOf(q);
-  const vs = q.variants || [];
-  const moreVar = (q.variantN || vs.length) > vs.length
-    ? `<div class="oc-more">另有 ${q.variantN - vs.length} 种措辞，展开后加载</div>` : '';
-  const variants = vs.length
-    ? `<div class="lb">其他措辞</div>` + vs.map((x) => `<div class="var">${esc(x)}</div>`).join('') + moreVar
-    : '';
+  const variants = `<div data-var-box="${q.id}">${renderVariantPreview(q)}</div>`;
   // officialN = 该题在官方结构化真题里出现的次数，>0 说明有权威出处
   const offBadge = q.officialN
     ? `<span class="badge-off" title="来自牛客结构化真题 ${q.officialN} 次">真题</span>`

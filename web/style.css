@@ -264,3 +264,17 @@ td.mx-tot,th.mx-tot{color:var(--dim);background:var(--card2);font-weight:600}
 .rb-clear{background:none;color:var(--acc);border:0;font-size:12.5px;cursor:pointer;font-family:inherit}
 .rb-hint{color:var(--dim);font-size:12px;margin-left:auto}
 @media print{.rangebar{display:none!important}}
+
+/* ---------- 其他措辞 × 出处 ----------
+   每种说法后面挂它出自的那几篇面经。原来是一个扁平列表，
+   和「被问到的场合」对不上，看不出哪句话说自哪儿。 */
+.var-item{padding:7px 0;border-top:1px solid var(--line)}
+.var-item:first-of-type{border-top:0}
+.var-item .var{padding:0}
+.var-n{color:var(--dim);font-size:11px;margin-left:6px}
+.vsrc-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.vsrc{color:var(--acc);font-size:11.5px;text-decoration:none;
+ background:rgba(var(--acc-rgb),.10);border:1px solid var(--line);
+ border-radius:999px;padding:2px 9px;white-space:nowrap}
+.vsrc:hover{border-color:var(--acc);background:rgba(var(--acc-rgb),.2)}
+@media print{.vsrc{color:#000;background:none;border-color:#bbb}}

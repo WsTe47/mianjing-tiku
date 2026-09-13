@@ -715,7 +715,37 @@ func (s *Store) Question(ctx context.Context, id int64) (*model.Question, error)
 		return nil, err
 	}
 	q.Occurs, q.Variants = occ[id], vm[id]
+	q.VariantSources = buildVariantSources(q.Occurs, q.Canonical)
 	return &q, nil
+}
+
+// buildVariantSources 按 raw_text 把出现记录归组，得到「哪种说法出自哪几篇面经」。
+//
+// 代表措辞本身不算「其他措辞」，跳过。按出现次数降序排——多次出现的说法更值得看，
+// 也更可能是真问题；只出现过一次、又长得像代码片段的那些会自然沉到底部。
+func buildVariantSources(occ []model.Occur, canonical string) []model.VariantSource {
+	idx := make(map[string]int, len(occ))
+	var out []model.VariantSource
+	for _, o := range occ {
+		t := strings.TrimSpace(o.RawText)
+		if t == "" || t == canonical {
+			continue
+		}
+		i, ok := idx[t]
+		if !ok {
+			idx[t] = len(out)
+			out = append(out, model.VariantSource{Text: t})
+			i = len(out) - 1
+		}
+		out[i].PostIDs = append(out[i].PostIDs, o.PostID)
+	}
+	sort.SliceStable(out, func(a, b int) bool {
+		if len(out[a].PostIDs) != len(out[b].PostIDs) {
+			return len(out[a].PostIDs) > len(out[b].PostIDs)
+		}
+		return out[a].Text < out[b].Text
+	})
+	return out
 }
 
 // facet 统计 posts 表某列的取值分布。
