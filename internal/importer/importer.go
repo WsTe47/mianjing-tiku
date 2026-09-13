@@ -389,6 +389,9 @@ var (
 		"为什么", "吗", "呢", "请问", "讲讲", "讲一下", "说说", "介绍", "大概", "主要", "具体", "的", "了"}
 )
 
+// reLeadArrow 匹配行首的列表箭头标记（「-> 」「→ 」「• 」等）。
+var reLeadArrow = regexp.MustCompile(`^(?:->|→|•|·)\s*`)
+
 var (
 	// 行首的题号/标签。面经里普遍写成「7.xxx」「4、xxx」「(3) xxx」「第 3 题 xxx」
 	// 「Q：xxx」「面试问题：xxx」，不去掉的话同一道题会因为编号不同聚成两簇。
@@ -1252,4 +1255,39 @@ func LoadMerges(path string) (map[string]string, map[string]string, error) {
 		}
 	}
 	return merges, canon, nil
+}
+
+// CleanDisplayText 清洗**展示用**的题目文本。
+//
+// 为什么需要单独一层：occurrences.raw_text 是原文证据，必须原样保留（前端
+// 「原文 ↗」靠它、排查问题也靠它）；但直接拿去展示会露出两类东西——
+//  1. 编号/标签前缀：「9、Embedding模型如何选择？」「-> Embedding」
+//  2. 不可见字符：零宽空格 U+200B、全角空格 U+3000、BOM、控制符
+//
+// canonical 走的是 stripLeadLabel 清洗过的路径，变体却是原文透出，
+// 于是同一道题在「标题」和「其他措辞」里长得不一样。实测 65,359 条去重写法中
+// 有 35 条含不可见字符、30 条含全角空格。
+//
+// ⚠️ U+200D（ZWJ）**必须保留**：它是 emoji 组合序列的一部分
+// （🧑\u200d🤝\u200d🧑），删掉会把 emoji 拆成三个独立字符。
+func CleanDisplayText(s string) string {
+	s = stripLeadLabel(s)
+	// 再剥一层「列表箭头」前缀。stripLeadLabel 只认题号/标签（9、Q：、(3)），
+	// 不认「->」「→」这类从思维导图/大纲里带出来的箭头，于是「-> Embedding」
+	// 会原样展示。**只剥行首的箭头**，不动正文里的（代码里的 `x -> y` 要保持原样）。
+	s = strings.TrimSpace(reLeadArrow.ReplaceAllString(s, ""))
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\u3000':
+			b.WriteRune(' ') // 全角空格按普通空格处理，避免行首出现诡异空隙
+		case r < 32 && r != '\t':
+			// 控制符（实测有一条正文里混进了 U+0006）
+		case r == '\u200b' || r == '\u200c' || r == '\ufeff' || r == '\u2060' || r == '\u00ad':
+			// 零宽空格 / 零宽不连字 / BOM / word-joiner / 软连字符
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
 }

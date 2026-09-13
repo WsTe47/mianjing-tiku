@@ -241,3 +241,29 @@ func TestClusterNormStaysUniqueWhenCanonicalsCollide(t *testing.T) {
 		}
 	}
 }
+
+// TestCleanDisplayText 覆盖展示层清洗。
+//
+// 变体来自 occurrences.raw_text（原文证据，不能改），直接展示会露出编号前缀
+// 与不可见字符；而 canonical 是清洗过的，两者不一致。
+func TestCleanDisplayText(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"9、Embedding模型如何选择？", "Embedding模型如何选择？"},
+		{"-> Embedding", "Embedding"},
+		{"→ 两个升序数组合并", "两个升序数组合并"},
+		// 只剥行首箭头，正文里的不动
+		{"指针 -> 引用的区别", "指针 -> 引用的区别"},
+		{"\u200b两个升序数组合并", "两个升序数组合并"},
+		{"第 2 题\u3000并箱放行", "并箱放行"},
+		{"欢迎加入官方微信，进群咨询：\x06", "欢迎加入官方微信，进群咨询："},
+		{"  前后有空格  ", "前后有空格"},
+		// ZWJ 必须保留，否则 emoji 会被拆散
+		{"🧑\u200d🤝\u200d🧑 【三面】", "🧑\u200d🤝\u200d🧑 【三面】"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := CleanDisplayText(c.in); got != c.want {
+			t.Errorf("CleanDisplayText(%q) = %q，期望 %q", c.in, got, c.want)
+		}
+	}
+}

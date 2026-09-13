@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -143,6 +144,31 @@ func (s *Server) matrix(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m)
 }
 
+// cleanVariantSources 把「其他措辞」清洗成适合展示的样子。
+//
+// 变体来自 occurrences.raw_text（原文），带编号前缀与不可见字符；
+// canonical 是清洗过的。不清洗的话同一道题在两处长得不一样。
+// 清洗后可能有两条变成同一条，所以按文本合并、把 postIds 并起来。
+func cleanVariantSources(vs []model.VariantSource) []model.VariantSource {
+	out := make([]model.VariantSource, 0, len(vs))
+	idx := make(map[string]int, len(vs))
+	for _, v := range vs {
+		t := importer.CleanDisplayText(v.Text)
+		if t == "" {
+			continue
+		}
+		if i, ok := idx[t]; ok {
+			out[i].PostIDs = append(out[i].PostIDs, v.PostIDs...)
+			continue
+		}
+		idx[t] = len(out)
+		out = append(out, model.VariantSource{Text: t, PostIDs: append([]int64(nil), v.PostIDs...)})
+	}
+	// 合并后重新按出处数量降序（后端原本已排好，合并会打乱）
+	sort.SliceStable(out, func(a, b int) bool { return len(out[a].PostIDs) > len(out[b].PostIDs) })
+	return out
+}
+
 // truthy 把查询参数当布尔解析："" / "0" / "false" 为假，其余为真。
 func truthy(s string) bool {
 	switch strings.ToLower(strings.TrimSpace(s)) {
@@ -242,6 +268,9 @@ func (s *Server) question(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "问题不存在")
 		return
 	}
+	// 展示层清洗：canonical 已由 stripLeadLabel 处理过，变体是原文透出，
+	// 不清洗会让同一道题在「标题」与「其他措辞」里长得不一样。
+	q.VariantSources = cleanVariantSources(q.VariantSources)
 	writeJSON(w, http.StatusOK, q)
 }
 
