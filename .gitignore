@@ -41,3 +41,8 @@ data/llm/newcats*.json
 # 数据库导出（走私有数据仓 / Release，不在这里）
 data/dump/
 *.sql.gz
+
+# 大模型精确分区的**输入与输出**：里面是 5145 条题目原文（候选簇成员 + 分区结果）。
+# 与 taxonomy/merges 那种几十条的「配置」不同，这是语料规模的数据，放私有数据仓。
+data/llm/partition/
+data/llm/partition.json

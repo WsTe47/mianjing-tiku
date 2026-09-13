@@ -132,3 +132,112 @@ func TestLoadMergesResolvesChains(t *testing.T) {
 		t.Error("不变式被破坏：Norm(canonical) != norm")
 	}
 }
+
+// TestPartitionSplitsCodeOverMerge 覆盖「代码初步合并 + 大模型精确合并」的分工。
+//
+// 代码的字符串规则会把「都含 prompt」的不同问题聚成一簇，而代码侧无法拆开；
+// 大模型分区的作用就是**按组 id 强制合并 + 禁止跨组**。
+func TestPartitionSplitsCodeOverMerge(t *testing.T) {
+	rows := []row{
+		{text: "prompt", postID: 1},
+		{text: "微调与 Prompt 的区别是什么？", postID: 2},
+		{text: "Prompt Cache是什么？", postID: 3},
+		{text: "如何防止用户prompt攻击", postID: 4},
+	}
+	// 先确认：没有分区时，代码确实把它们合成一簇（这就是要修的问题）
+	if qs := Cluster(rows); len(qs) != 1 {
+		t.Fatalf("前提不成立：代码本应把它们错合成 1 簇，实际 %d 簇", len(qs))
+	}
+
+	// 大模型给出的三个组
+	rules := &ClusterRules{
+		PartGroup: map[string]string{
+			NormKeepCase("prompt"):             "p0",
+			NormKeepCase("微调与 Prompt 的区别是什么？"): "p1",
+			NormKeepCase("Prompt Cache是什么？"):   "p2",
+			NormKeepCase("如何防止用户prompt攻击"):     "p3",
+		},
+		PartCanon: map[string]string{
+			"p0": "prompt", "p1": "微调与 Prompt 的区别是什么？",
+			"p2": "Prompt Cache是什么？", "p3": "如何防止用户prompt攻击",
+		},
+	}
+	qs := ClusterWithRules(rows, rules)
+	if len(qs) != 4 {
+		t.Fatalf("按分区应拆成 4 簇，实际 %d：%v", len(qs), questionTexts(qs))
+	}
+	for _, q := range qs {
+		if q.N != 1 {
+			t.Errorf("拆分后每簇应各 1 条，实际 %q n=%d", q.Canonical, q.N)
+		}
+	}
+}
+
+// TestPartitionGroupsByIDNotString 是分区机制的核心不变量：
+// **同组必然合并**（哪怕字符串毫无相似度），**异组必然不合并**（哪怕只差一点）。
+func TestPartitionGroupsByIDNotString(t *testing.T) {
+	// 两条字符串毫不相干，但 LLM 说它们是同一道题 → 必须合
+	same := []row{{text: "讲讲你对 RAG 的理解", postID: 1}, {text: "检索增强生成是什么", postID: 2}}
+	r1 := &ClusterRules{
+		PartGroup: map[string]string{NormKeepCase("讲讲你对 RAG 的理解"): "p0", NormKeepCase("检索增强生成是什么"): "p0"},
+		PartCanon: map[string]string{"p0": "讲讲你对 RAG 的理解"},
+	}
+	if qs := ClusterWithRules(same, r1); len(qs) != 1 || qs[0].N != 2 {
+		t.Fatalf("同组必须合并，实际 %d 簇", len(qs))
+	}
+	if qs := ClusterWithRules(same, r1); qs[0].Canonical != "讲讲你对 RAG 的理解" {
+		t.Errorf("组标题应取自 PartCanon，实际 %q", qs[0].Canonical)
+	}
+
+	// 两条字符串几乎一样，但 LLM 说它们是两道题 → 必须拆
+	diff := []row{{text: "讲一下对React的理解", postID: 1}, {text: "讲一下对ReAct的理解", postID: 2}}
+	r2 := &ClusterRules{
+		PartGroup: map[string]string{NormKeepCase("讲一下对React的理解"): "p0", NormKeepCase("讲一下对ReAct的理解"): "p1"},
+		PartCanon: map[string]string{"p0": "讲一下对React的理解", "p1": "讲一下对ReAct的理解"},
+	}
+	if qs := ClusterWithRules(diff, r2); len(qs) != 2 {
+		t.Fatalf("异组必须拆开（React ≠ ReAct），实际 %d 簇：%v", len(qs), questionTexts(qs))
+	}
+}
+
+func TestLoadPartitionMissingFileIsNoop(t *testing.T) {
+	p, err := LoadPartition("testdata/definitely-not-here.json")
+	if err != nil || p != nil {
+		t.Fatalf("缺文件应返回 (nil, nil)，实际 (%v, %v)", p, err)
+	}
+}
+
+// TestClusterNormStaysUniqueWhenCanonicalsCollide 覆盖唯一性兜底。
+//
+// norm 在库里是唯一键。而分区/合并表指定的代表措辞**归一化后可能撞车**：
+// 实测「介绍mysql」与「-- MySQL --」都归一化成 mysql（「介绍」是填充词），
+// 直接触发 Error 1062，让整次重建失败、questions 表被留在清空状态。
+func TestClusterNormStaysUniqueWhenCanonicalsCollide(t *testing.T) {
+	cases := [][2]string{
+		{"介绍mysql", "-- MySQL --"},
+		{"&和&&的区别", "==和===的区别"},
+	}
+	for _, c := range cases {
+		rows := []row{{text: c[0], postID: 1}, {text: c[1], postID: 2}}
+		rules := &ClusterRules{
+			PartExact: map[string]string{c[0]: "p0", c[1]: "p1"},
+			PartGroup: map[string]string{
+				NormKeepCase(c[0]): "p0",
+				NormKeepCase(c[1]): "p1",
+			},
+			PartCanon: map[string]string{"p0": c[0], "p1": c[1]},
+		}
+		qs := ClusterWithRules(rows, rules)
+		if len(qs) != 2 {
+			t.Fatalf("%v / %v：应为 2 簇，实际 %d", c[0], c[1], len(qs))
+		}
+		if qs[0].Norm == qs[1].Norm {
+			t.Errorf("%v / %v：norm 撞车了，都是 %q（会触发 Error 1062）", c[0], c[1], qs[0].Norm)
+		}
+		for _, q := range qs {
+			if q.Norm == "" {
+				t.Errorf("norm 不能为空")
+			}
+		}
+	}
+}

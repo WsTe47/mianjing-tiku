@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/climber47/nc-interview/internal/model"
@@ -422,9 +423,15 @@ func stripLeadLabel(s string) string {
 }
 
 // Norm 归一化文本用于聚类。保留字母数字——技术题里 DNS/Channel/gRPC 才是主体。
-func Norm(s string) string {
+func Norm(s string) string { return strings.ToLower(NormKeepCase(s)) }
+
+// NormKeepCase 与 Norm 相同，但**保留大小写**。
+//
+// 专供大模型分区查表：Norm 会 ToLower，于是「ReAct」（Agent 的推理框架）
+// 与「React」（前端库）折叠成同一个键，两个完全不同的知识点就没法分开——
+// 实测它们确实被代码合进了一簇。分区表用这个键，才能把 LLM 的判定落地。
+func NormKeepCase(s string) string {
 	s = stripLeadLabel(s)
-	s = strings.ToLower(s)
 	s = reNonWord.ReplaceAllString(s, "")
 	for _, f := range fillers {
 		s = strings.ReplaceAll(s, f, "")
@@ -873,7 +880,21 @@ const (
 
 func clip(s string, n int) string { return model.ClipRunes(s, n) }
 
-func Cluster(rows []row) []model.Question { return ClusterWithMerges(rows, nil, nil) }
+// ClusterRules 是外部注入的合并规则，全部由文件产出，跨重建可复现。
+type ClusterRules struct {
+	Merges     map[string]string // 同义合并：源 norm → 目标 norm
+	MergeCanon map[string]string // 目标 norm → 目标原文
+	PartExact  map[string]string // 大模型分区：成员原文 → 组 id（优先）
+	PartGroup  map[string]string // 大模型分区：成员 norm → 组 id（兜底）
+	PartCanon  map[string]string // 组 id → 组标题原文
+}
+
+func Cluster(rows []row) []model.Question { return ClusterWithRules(rows, nil) }
+
+// ClusterWithMerges 保留旧签名（测试与调用方还在用）。
+func ClusterWithMerges(rows []row, merges, mergeCanon map[string]string) []model.Question {
+	return ClusterWithRules(rows, &ClusterRules{Merges: merges, MergeCanon: mergeCanon})
+}
 
 // ClusterWithMerges 在聚类前先把「同义题」映射到同一个规范形，让同义问法落进同一簇。
 //
@@ -881,12 +902,16 @@ func Cluster(rows []row) []model.Question { return ClusterWithMerges(rows, nil, 
 // 为什么需要 mergeCanon：整簇最终的 norm 是 Norm(代表措辞)，如果代表措辞仍是
 // 簇内最长的那条变体，norm 就不会等于合并目标，而大模型标注是**按 norm 存**的，
 // 于是合并后的簇会整片丢掉标注。所以要把代表措辞钉在合并目标上。
-func ClusterWithMerges(rows []row, merges, mergeCanon map[string]string) []model.Question {
+func ClusterWithRules(rows []row, rules *ClusterRules) []model.Question {
+	if rules == nil {
+		rules = &ClusterRules{}
+	}
 	type cluster struct {
 		key      string // **稳定**的合并锚点：进簇第一行的归一化文本，此后永不改变
 		klen     int    // len([]rune(key))，建簇时算一次
 		krunes   []rune // key 的 rune 切片，避免热路径上反复转换
-		forceRep string // 同义合并目标原文；非空时覆盖代表措辞
+		group    string // 大模型分区组 id；非空表示这一簇由 LLM 判定，只认同组
+		forceRep string // 同义合并 / 分区目标的原文；非空时覆盖代表措辞
 		norm     string // 最终写库的键：Norm(代表措辞)，与 canonical 保持一致
 		occ      []row
 	}
@@ -897,8 +922,20 @@ func ClusterWithMerges(rows []row, merges, mergeCanon map[string]string) []model
 			n = r.text
 		}
 		n = clip(n, maxNormRunes)
-		if t, ok := merges[n]; ok {
+		if t, ok := rules.Merges[n]; ok {
 			n = t
+		}
+		// 分区优先：命中的行只与**同组**的簇合并。
+		// 这里是「大模型做精确合并」落地的地方——组内不管字符串差多远都合，
+		// 组间哪怕只差一个词也绝不串。代码的字符串规则只负责处理没被 LLM 看过的长尾。
+		// 原文优先：norm 会把标点抹平（「&和&&的区别」与「==和===的区别」同键）
+		grp := rules.PartExact[r.text]
+		if grp == "" {
+			grp = rules.PartGroup[clip(NormKeepCase(r.text), maxNormRunes)]
+		}
+		forceRep := rules.MergeCanon[n]
+		if grp != "" {
+			forceRep = rules.PartCanon[grp]
 		}
 		// 长度只跟当前行有关，必须在 merge 映射之后算，且**提到循环外**。
 		//
@@ -916,6 +953,17 @@ func ClusterWithMerges(rows []row, merges, mergeCanon map[string]string) []model
 		var hit *cluster
 		for i := range cs {
 			g := &cs[i]
+			if grp != "" {
+				// 分区行：只认同组，完全不做字符串比较
+				if g.group == grp {
+					hit = g
+					break
+				}
+				continue
+			}
+			if g.group != "" {
+				continue // 未分区的行不许并入分区组，否则会破坏 LLM 的判定
+			}
 			// ⚠️ 合并只能用 key，绝不能用 norm。
 			//
 			// 这里踩过一次严重事故：norm 是「簇内最长/官方那条的归一化文本」，
@@ -950,12 +998,19 @@ func ClusterWithMerges(rows []row, merges, mergeCanon map[string]string) []model
 			hit.occ = append(hit.occ, r)
 		} else {
 			nr := []rune(n)
-			cs = append(cs, cluster{key: n, klen: len(nr), krunes: nr,
-				norm: n, forceRep: mergeCanon[n], occ: []row{r}})
+			cs = append(cs, cluster{key: n, klen: len(nr), krunes: nr, group: grp,
+				norm: n, forceRep: forceRep, occ: []row{r}})
 		}
 	}
 
 	out := make([]model.Question, 0, len(cs))
+	// norm 在库里是唯一键（uk_questions_norm），这里必须保证落库前不撞车。
+	//
+	// 撞车是 forceRep 带来的新风险：代表措辞由同义合并表 / 大模型分区指定，
+	// 而它们给的两条标题**归一化后可能完全相同**——实测「介绍mysql」与
+	// 「-- MySQL --」都归一化成 mysql，「&和&&的区别」与「==和===的区别」
+	// 都归一化成「和区别」，直接触发 Error 1062 让整次重建失败。
+	usedNorm := make(map[string]bool, len(cs))
 	for _, g := range cs {
 		// 代表措辞优先取官方结构化真题的标题：它是人工整理过的，
 		// 比「正文里抠出来的一行」更规范（没有「自我介绍？」这类口语残留）。
@@ -1010,6 +1065,28 @@ func ClusterWithMerges(rows []row, merges, mergeCanon map[string]string) []model
 		if g.norm == "" {
 			g.norm = clip(rep, maxNormRunes)
 		}
+		if usedNorm[g.norm] {
+			// 撞了就换一条代表：簇内按长度降序试，取第一个 norm 不冲突的
+			alts := append([]row(nil), g.occ...)
+			sort.SliceStable(alts, func(a, b int) bool {
+				return len([]rune(alts[a].text)) > len([]rune(alts[b].text))
+			})
+			for _, o := range alts {
+				cand := stripLeadLabel(o.text)
+				cn := clip(Norm(cand), maxNormRunes)
+				if cn != "" && !usedNorm[cn] {
+					rep, g.norm = cand, cn
+					break
+				}
+			}
+		}
+		// 整个簇的写法都撞（例如成员全是同一段代码片段）→ 加序号兜底，
+		// 保证非空且唯一。代价是这一簇的标注会按新 norm 匹配不上，
+		// 但总好过让整次重建失败。
+		for n := 2; usedNorm[g.norm]; n++ {
+			g.norm = clip(g.norm+strconv.Itoa(n), maxNormRunes)
+		}
+		usedNorm[g.norm] = true
 
 		variants := map[string]bool{}
 		occurs := make([]model.Occur, 0, len(g.occ))
@@ -1095,14 +1172,25 @@ func ImportAll(ctx context.Context, st *store.Store, log func(string, ...any)) (
 	if err != nil {
 		return Stats{}, err
 	}
+	// 大模型精确分区：命中的行按组 id 合并，组间绝不串
+	part, err := LoadPartition(partitionPath)
+	if err != nil {
+		return Stats{}, err
+	}
+	rules := &ClusterRules{Merges: merges, MergeCanon: mergeCanon}
+	partN := 0
+	if part != nil {
+		rules.PartExact, rules.PartGroup, rules.PartCanon = part.Exact, part.Group, part.Canon
+		partN = len(part.Canon)
+	}
 	before := len(rows)
-	qs := ClusterWithMerges(rows, merges, mergeCanon)
+	qs := ClusterWithRules(rows, rules)
 	if err := st.ReplaceQuestions(ctx, qs); err != nil {
 		return Stats{}, err
 	}
 	if log != nil {
-		log("从库内 %d 篇帖子重建：%d 行 → %d 组（同义合并 %d 条映射）",
-			len(posts), before, len(qs), len(merges))
+		log("从库内 %d 篇帖子重建：%d 行 → %d 组（同义合并 %d 条，大模型分区 %d 组）",
+			len(posts), before, len(qs), len(merges), partN)
 	}
 	return Stats{Posts: len(posts), RawLines: len(rows), Questions: len(qs), Skipped: skipped}, nil
 }
