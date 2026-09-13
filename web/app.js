@@ -167,6 +167,24 @@ function bindExpand(container) {
       refreshVariants(vLess.closest('.q'));
       return;
     }
+    const vSec = e.target.closest('[data-varsec]');
+    if (vSec) {
+      e.stopPropagation();
+      const qid = vSec.dataset.varsec;
+      if (varSecOpen.has(qid)) varSecOpen.delete(qid); else varSecOpen.add(qid);
+      refreshVariants(vSec.closest('.q'));
+      return;
+    }
+    const aLess = e.target.closest('[data-ans-less]');
+    if (aLess) {
+      e.stopPropagation();
+      const qid = aLess.dataset.ansLess;
+      ansOpen.delete(qid);
+      const card = aLess.closest('.q');
+      const ab = card.querySelector(`[data-ans-box="${qid}"]`);
+      if (ab && card._q) ab.innerHTML = answerBlockFull(card._q, qid);
+      return;
+    }
     const oAll = e.target.closest('[data-occ-all]');
     if (oAll) {
       e.stopPropagation();
@@ -305,20 +323,31 @@ function renderVariantPreview(q) {
 // 「自我介绍一下。」有 322 种措辞、出处加起来上千条，全铺开就是几百行。
 // 所以默认只列前 VAR_SHOW 种、每种只列前 VSRC_SHOW 篇，其余按需展开。
 const VAR_SHOW = 8;
-// 参考答案折叠阈值。答案长度分布很集中：94% 的题在 1,500~3,000 字（平均 1,935），
-// 全铺开会把卡片撑成「一屏答案 + 一点点别的」。默认只给前 ANSWER_FOLD 字。
-const ANSWER_FOLD = 600;
+// 参考答案默认只露两行——用 CSS line-clamp 裁，所以不论窗口多宽都正好两行；
+// 这里只保证 DOM 里塞的字够撑满两行。94% 的题答案在 1,500~3,000 字，全铺开就是一屏。
+const ANSWER_PREVIEW_RUNES = 400;
 // 出现记录同样要折叠：高频题动辄几百条（「自我介绍一下。」有 584 条），
 // 全铺开是 160KB / 2900 行——比措辞还夸张。
 const OCC_SHOW = 12;
-const occOpen = new Set();
-const ansOpen = new Set();
 const VSRC_SHOW = 3;
-const varOpen = new Set();   // 已展开全部措辞的题目 id
-const vsrcOpen = new Set();  // 已展开全部出处的 "题目id:第几种"
+const occOpen = new Set();
+const ansOpen = new Set();     // 已展开完整答案的题目 id
+const varOpen = new Set();     // 已展开「全部 N 种」的题目 id
+const varSecOpen = new Set();  // 已展开「其他措辞」整个模块的题目 id
+const vsrcOpen = new Set();    // 已展开全部出处的 "题目id:第几种"
 
 function renderVariantSources(sources, occs, qid) {
   if (!sources || !sources.length) return '';
+  const n = sources.length;
+  // 模块整体默认收起：这是展开卡片里最长的一块，先只给一行标题，想看再点开。
+  // 点开之后仍只列前 VAR_SHOW 种（每种再只列前 VSRC_SHOW 篇）。
+  const secOpen = varSecOpen.has(qid);
+  const head = `<button class="sec-toggle" data-varsec="${qid}">`
+    + `<span>其他措辞 · 各自出自哪篇面经</span>`
+    + `<span class="sec-n">${n} 种</span>`
+    + `<span class="sec-arrow">${secOpen ? '▴ 收起' : '▾ 展开'}</span></button>`;
+  if (!secOpen) return head;
+
   const byPost = {};
   (occs || []).forEach((o) => { byPost[o.postId] = o; });
 
@@ -337,36 +366,40 @@ function renderVariantSources(sources, occs, qid) {
     const rest = refsAll.length - refs.length;
     const restBtn = rest > 0
       ? `<button class="vsrc-more" data-vsrc="${key}">还有 ${rest} 篇 ▾</button>` : '';
-    const n = (v.postIds || []).length;
+    const cnt = (v.postIds || []).length;
     // 出现次数是判断「这条措辞可不可信」的主要线索，所以单独做成醒目的角标
     return `<div class="var-item">
-      <div class="var">${esc(v.text)}${n > 1 ? `<span class="var-n">×${n}</span>` : ''}</div>
+      <div class="var">${esc(v.text)}${cnt > 1 ? `<span class="var-n">×${cnt}</span>` : ''}</div>
       <div class="vsrc-list">${chips}${restBtn}</div>
     </div>`;
   }).join('');
 
-  const hidden = sources.length - shown.length;
+  const hidden = n - shown.length;
   let foot = '';
   if (hidden > 0) {
-    foot = `<button class="var-more" data-var="${qid}">展开全部 ${sources.length} 种措辞 ▾</button>`;
-  } else if (allVar && sources.length > VAR_SHOW) {
+    foot = `<button class="var-more" data-var="${qid}">展开全部 ${n} 种措辞 ▾</button>`;
+  } else if (allVar && n > VAR_SHOW) {
     foot = `<button class="var-more" data-varless="${qid}">收起 ▴</button>`;
   }
-  return `<div class="lb">其他措辞 · 各自出自哪篇面经</div>${items}${foot}`;
+  return head + items + foot;
 }
 
-// answerBlockFull 渲染参考答案：过长时先给前 ANSWER_FOLD 字，其余按需展开。
 function answerBlockFull(q, id) {
   const txt = q.answer || '';
   if (!txt) return '';
   const head = `<div class="lb ans-lb">参考答案 <span class="ans-src">牛客结构化真题</span></div>`;
   const runes = Array.from(txt);
-  if (ansOpen.has(id) || runes.length <= ANSWER_FOLD) return head + answerParas(txt);
-  return head + answerParas(runes.slice(0, ANSWER_FOLD).join(''))
+  if (ansOpen.has(id)) {
+    return head + answerParas(txt)
+      + `<button class="var-more" data-ans-less="${id}">收起 ▴</button>`;
+  }
+  // 折叠态：塞 400 字再交给 CSS 裁成两行（猜字数的话，窄窗口会变四行、宽窗口一行半）
+  const preview = runes.slice(0, ANSWER_PREVIEW_RUNES).join('').replace(/\s*\n+\s*/g, ' ').trim();
+  return head
+    + `<div class="ans-clamp">${esc(preview)}</div>`
     + `<button class="var-more" data-ans-expand="${id}">展开全文（共 ${runes.length} 字）▾</button>`;
 }
 
-// refreshOcc 只重画出现记录块。
 function refreshOcc(card) {
   const q = card && card._q;
   if (!q) return;

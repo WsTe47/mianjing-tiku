@@ -288,3 +288,17 @@ td.mx-tot,th.mx-tot{color:var(--dim);background:var(--card2);font-weight:600}
 .vsrc-more{padding:2px 9px}
 .var-more:hover,.vsrc-more:hover{border-color:var(--acc);background:rgba(var(--acc-rgb),.16)}
 @media print{.var-more,.vsrc-more{display:none}}
+
+/* 折叠后的参考答案：固定两行。
+   用 line-clamp 而不是「截前 N 个字」——后者在不同宽度下会是 1 行或 4 行。 */
+.ans-clamp{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+ overflow:hidden;color:var(--fg);line-height:1.65}
+
+/* 可折叠小节的标题条（目前用于「其他措辞」整体开合） */
+.sec-toggle{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font-family:inherit;
+ background:var(--card2);color:var(--fg);border:1px solid var(--line);border-radius:9px;
+ padding:7px 11px;font-size:12.5px;cursor:pointer;margin:8px 0 6px}
+.sec-toggle:hover{border-color:var(--acc)}
+.sec-n{color:var(--acc);font-weight:600}
+.sec-arrow{margin-left:auto;color:var(--dim);font-size:11.5px}
+@media print{.sec-toggle{display:none}.ans-clamp{-webkit-line-clamp:unset;overflow:visible}}
