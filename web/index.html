@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>面经题库 · 多维检索</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1><span>面经题库</span></h1>
+  <div class="sub" id="sub">加载中…</div>
+</header>
+
+<nav class="tabs" id="tabs"></nav>
+
+<div class="rangebar" id="rangebar"></div>
+
+<main id="view"></main>
+
+<footer>
+  数据来源：牛客网<b>公开面经</b>（用户主页动态 + 全站 sitemap 抓取，<span id="rng"></span>）<br>
+  按 <b>出现次数</b> 降序。点击问题展开<b>参考答案</b>、原始措辞与<b>原文链接</b>。
+  <div class="api">API: <code>/api/questions</code> · <code>/api/facets</code> · <code>/api/posts</code></div>
+</footer>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

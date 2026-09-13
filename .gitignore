@@ -1,0 +1,43 @@
+# 编译产物
+bin/
+
+# 凭据绝不入库
+.env
+*.cookie
+scripts/*.local.sql
+cookie.txt
+
+# 抓取产物的中间文件（posts.jsonl 是数据源，保留）
+data/*.tmp
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+
+# 抓取到的原始 HTML（851MB）。它可由 sitemap 重新抓取，属于中间产物，
+# 而且体积远超 GitHub 的合理范围（单文件上限 100MB，仓库建议 1GB 以内）。
+data/raw/
+
+# 本机日志
+data/logs/
+
+# ---------- 语料内容：不入公开仓 ----------
+# 这些文件里是牛客用户的帖子原文 / 题目文本，属于第三方内容。
+# 公开仓只放代码与文档；数据在私有仓 mianjing-tiku-data（含全量 mysqldump）。
+# 保留在公开仓的只有 data/llm/taxonomy.json 与 data/llm/merges.json——
+# 它们是「让管线跑得起来」的最小配置（共约 40KB）。
+data/posts.jsonl
+data/sitemap/
+data/llm/out/
+data/llm/batches/
+data/llm/archive/
+data/llm/merges/
+data/llm/merges2/
+data/llm/sample.json
+data/llm/merge.json
+data/llm/newcats*.json
+
+# 数据库导出（走私有数据仓 / Release，不在这里）
+data/dump/
+*.sql.gz
